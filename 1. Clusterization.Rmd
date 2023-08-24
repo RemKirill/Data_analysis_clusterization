@@ -1,0 +1,264 @@
+---
+title: "Task7_Redkokosh"
+author: "Redkokosh Kirill"
+date: "12/7/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(factoextra)
+library(cluster)
+```
+
+```{r}
+diabetes <- read.csv("winequality-red.csv", header = TRUE, as.is = FALSE, sep = ';')
+diabetes <- diabetes[, -1]
+head(diabetes)
+```
+
+## Первичный анализ данных
+
+### Описательная статистика
+
+```{r}
+summary(diabetes)
+```
+
+Среднее и медиана отличается у всех признаков, ожидаем несимметричные распределения.
+
+### Виды признаков
+
+Построим matrix plot для того, чтобы увидеть особенности в наших данных.
+
+```{r}
+library(lattice)
+library(ggplot2)
+library('GGally')
+ggpairs(diabetes, title="correlogram", columns=c(2:4), upper = list(continuous = "points"), diag = list(continuous = "barDiag"))
+```
+
+Прологарифмируем признаки. 
+
+```{r}
+diabetes_l <- transform(diabetes, glucose=log(glucose), insulin=log(insulin))
+names(diabetes_l)[names(diabetes_l) == 'glucose'] <- 'log_glucose'
+names(diabetes_l)[names(diabetes_l) == 'insulin'] <- 'log_insulin'
+ggpairs(diabetes_l, title="correlogram", columns=c(2:4), upper = list(continuous = "points"), diag = list(continuous = "barDiag"))
+```
+
+Удалим единичные outliers.
+
+А также добавим раскраску по признаку "class".
+
+```{r}
+diabetes_lo <- diabetes_l
+diabetes_lo[rownames(diabetes_lo)[diabetes_lo$log_insulin < 5],] <- NA
+diabetes_lo <- na.omit(diabetes_lo)
+ggpairs(diabetes_lo, title="correlogram", columns=c(2:4), upper = list(continuous = "points"), diag = list(continuous = "barDiag"), mapping=ggplot2::aes(colour = class))
+```
+
+При дальнейшей кластеризации классифицирующий признак-- "class" рассматриваться не будет.
+
+```{r}
+library("FactoMineR")
+dflo <- diabetes_lo[, -1]
+res.pca <- PCA(dflo, scale.unit = TRUE, ncp = 2, graph= FALSE)
+get_eigenvalue(res.pca)
+fviz_pca_biplot(res.pca, habillage=diabetes_lo$class)
+```
+
+Первые 2 ГК описывают 98% данных.
+
+Рассмотрим 3 метода для определения числа кластеров:
+
+1. «Силуэт» вычисляется на основе среднего внутрикластерного расстояния и среднего расстояния до ближайшего кластера по каждому образцу.
+
+Для точки $i$ из кластера $C_{I}$:
+
+$a(i)={\frac{1}{|C_{I}|-1}}\sum _{j\in C_{I},i\neq j}d(i,j)$ -- среднее расстояние между i-той точкой и всеми остальными точками кластера.
+
+$b(i)=\min _{J\neq I}{\frac {1}{|C_{J}|}}\sum _{j\in C_{J}}d(i,j)$ -- наименьшее среднее расстояние между i-той точкой и всеми точками любого другого кластера.
+
+Теперь мы определяем силуэт (значение) одной точки данных: 
+
+$s(i) = \begin{cases} 1-a(i)/b(i), & \mbox{if } a(i) < b(i) \\ 0, & \mbox{if } a(i) = b(i) \\ b(i)/a(i)-1, & \mbox{if } a(i) > b(i) \\ \end{cases}$
+
+Среднее s(i) по всем точками кластера - это мера того, насколько плотно сгруппированы все точки кластера. Таким образом, среднее
+s(i) по всем данным всего набора данных является мерой того, насколько правильно были кластеризованы данные.
+
+2. Метод локтя основывается на сумме квадратов расстояний между точками и центроидами.
+
+Рассматривается характер изменения общего внутригруппового разброса с увеличением числа групп k. Объединив все n наблюдений в одну группу, мы имеем наибольшую внутрикластерную дисперсию, которая будет снижаться до 0 при $k \rightarrow n$. На каком-то этапе снижение этой дисперсии замедляется - на графике это происходит в точке, называемой “локтем”.
+
+3. Статистика разрыва сравнивает общую дисперсию внутри кластера для различных значений k с их ожидаемыми значениями для распределения без кластеризации.
+
+Пусть  $E^∗_n{log(W^∗_k)}$ обозначает оценку средней дисперсии $W^∗_k$, полученной бутстреп-методом, когда k кластеров образованы случайными наборами объектов из исходной выборки размером n.
+
+Тогда статистика:
+
+$Gap_n(k)=E^∗_n{log(W^∗_k)}−log(W_k)$
+
+определяет отклонение наблюдаемой дисперсии $W_k$ от ее ожидаемой величины при справедливости нулевой гипотезы о том, что исходные данные образуют только один кластер.
+
+При сравнительном анализе последовательности значений  $Gap_n(k),k=2,…,K_{max}$ наибольшее значение статистики соответствует наиболее полезной группировке, дисперсия которой максимально меньше внутригрупповой дисперсии кластеров, собранных из случайных объектов исходной выборки.
+
+```{r}
+fviz_nbclust(dflo, kmeans, method = "silhouette", k.max = 10) #"silhouette" (for average silhouette width), "wss" (for total within sum of square) and "gap_stat" (for gap statistics).
+fviz_nbclust(dflo, kmeans, method = "wss", k.max = 10)
+fviz_nbclust(dflo, kmeans, method = "gap_stat", k.max = 6)
+```
+
+Будем рассматривать деление на 2 и 3 класстерa.
+
+```{r}
+set.seed(10)
+km2 <- kmeans(dflo, centers = 2, nstart = 100)
+km2$size
+km2$centers#/sapply(dflo, sd)
+km3 <- kmeans(dflo, centers = 3, nstart = 100) 
+km3$size
+km3$centers#/sapply(dflo, sd)
+```
+
+Кластеры получаются неравного размера (как и при рассмотрении классифицирующего признака, но там другое соотвношение индивидов в классах).
+
+Деление на кластеры в плоскости первых 2 ГК и на ggpairs для 2 и 3 кластеров при использовании метода k-means:
+
+```{r}
+fviz_cluster(km2, data = dflo)
+fviz_cluster(km3, data = dflo)
+ggpairs(dflo, title="correlogram", columns=c(1:3), upper = list(continuous = "points"), diag = list(continuous = "barDiag"), mapping=ggplot2::aes(colour = factor(km2$cluster)))
+ggpairs(dflo, title="correlogram", columns=c(1:3), upper = list(continuous = "points"), diag = list(continuous = "barDiag"), mapping=ggplot2::aes(colour = factor(km3$cluster)))
+```
+
+Кластеризируем данные с меньшим числом признаков, для этого рассмотрим первые 2 ГК (на одну меньше, чем количество кластеров).
+
+```{r}
+km3_pca <- kmeans(res.pca$ind$coord, centers = 3, nstart = 100) 
+km3_pca$size
+km3_pca$centers#/sapply(res.pca$ind$coord, sd)
+fviz_cluster(km3_pca, data = res.pca$ind$coord)
+#ggpairs(data.frame(res.pca$ind$coord), title="correlogram", columns=c(1:2), upper = list(continuous = "points"), diag = list(continuous = "barDiag"), mapping=ggplot2::aes(colour = factor(km3_pca$cluster)))
+```
+
+Деление также неравномерное.
+
+Перейдем к следующему методу кластеризации-- методу иерархической кластеризации с разными правилами объединения кластеров.
+
+```{r}
+library(dplyr)
+d <- dist(scale(dflo), method = "euclidean")
+h_average <- hclust(d, method = "average")
+plot(h_average, cex = 0.7, hang = -1) #агломеративная кластеризация, групповое среднее расстояние
+cut_average <- cutree(h_average, k = 3)
+df_cl <- mutate(dflo, cluster = cut_average)
+ggpairs(df_cl, title="correlogram", columns=c(1:3), upper = list(continuous = "points"), diag = list(continuous = "barDiag"), mapping=ggplot2::aes(colour = factor(cluster)))
+```
+
+```{r}
+h_single <- hclust(d, method = "single")
+plot(h_single, cex = 0.7, hang = -1) #агломеративная кластеризация, расстояние ближнего соседа (цепочки)
+cut_single <- cutree(h_single, k = 3)
+df_cl <- mutate(dflo, cluster = cut_single)
+ggpairs(df_cl, title="correlogram", columns=c(1:3), upper = list(continuous = "points"), diag = list(continuous = "barDiag"), mapping=ggplot2::aes(colour = factor(cluster)))
+```
+
+Тут все совсем плохо ):
+
+```{r}
+res.hc <- hclust(d, method = "complete") #агломеративная кластеризация, расстояние дальнего соседа (шарики)
+plot(res.hc, cex = 0.7, hang = -1)
+rect.hclust(res.hc, k = 3, border = 2:5)
+cut_complete <- cutree(res.hc, k = 3)
+df_cl <- mutate(dflo, cluster = cut_complete)
+ggpairs(df_cl, title="correlogram", columns=c(1:3), upper = list(continuous = "points"), diag = list(continuous = "barDiag"), mapping=ggplot2::aes(colour = factor(cluster)))
+```
+
+Дивизионная кластеризация diana:
+
+1. На шаге 0 все объекты объединены в один кластер.
+
+2. На каждом шаге кластер делится, пока на шаге n - 1 все объекты данных не будут отделены друг от друга.
+
+3. На каждом шаге делится кластер, назовем его R на два кластера A и B. Первоначально A равно R и B пуст. На первом этапе мы должны переместить один объект из A в B. Для каждого объекта i из A мы вычисляем среднее несходство ко всем другим объектам A:
+
+$d(i,A({i}))=\frac{1}{|A|-1}\sum_{i \neq j}d(i,j)$
+
+Объект i', для которого уравнение выше достигает своего максимального значения, будет перемещено, поэтому положим
+
+$A_{new}=A_{old} \setminus \{i'\}$
+
+$B_{new}=B_{old} \bigcup\{i'\}$
+
+На следующих этапах мы ищем другие точки для перехода из A в B. Пока A все еще содержит более одного объекта, мы вычисляем
+
+$d(i,A({i}))-d(i,B)=\frac{1}{|A|-1}\sum_{j \in A, i \neq j}d(i,j) - \frac{1}{|B|}\sum_{h \in B}d(i,h)$
+
+для каждого объекта i из A, и мы рассматриваем объект i'', который максимизирует эту величину. Когда максимальное значение вышеприведенного уравнения строго положительное, мы перемещаем i'' от A до B, а затем просматриваем $A_{new}$. С другой стороны, когда максимальное значение разности отрицательное или 0, мы останавливаем процесс, и разделение R на A и B завершено.
+
+На каждом шаге делящего алгоритма мы также должны решить, какой кластер нужно разбить. Для этого вычислим диаметр
+
+$diam(Q)=max_{j \in Q, h \in Q} d(j,h)$
+
+для каждого кластера Q, доступного после предыдущего шага, и выбираем кластер, с наибольшим диаметром.
+
+```{r}
+divisive.clust <- diana(as.matrix(d), diss = TRUE, keep.diss = TRUE) #дивизионная кластеризация
+plot(divisive.clust, main = "Divisive", which.plots = 2, hang = -1)
+cut_div <- cutree(divisive.clust, k = 3)
+df_cl <- mutate(dflo, cluster = cut_div)
+ggpairs(df_cl, title="correlogram", columns=c(1:3), upper = list(continuous = "points"), diag = list(continuous = "barDiag"), mapping=ggplot2::aes(colour = factor(cluster)))
+```
+
+Многие методы показывают похожие результаты. Если сравнивать с исходной классификацией, то методы кластеризации разбивают данные на другие группы.
+
+```{r}
+divisive.clust <- diana(as.matrix(dist(scale(res.pca$ind$coord))), diss = TRUE, keep.diss = TRUE)
+plot(divisive.clust, main = "Divisive", which.plots = 2, hang = -1)
+cut_div <- cutree(divisive.clust, k = 3)
+df_cl <- mutate(dflo, cluster = cut_div)
+ggpairs(df_cl, title="correlogram", columns=c(1:3), upper = list(continuous = "points"), diag = list(continuous = "barDiag"), mapping=ggplot2::aes(colour = factor(cluster)))
+```
+
+Не слишком хорошо сработал метод понижения числа признаков.
+
+```{r}
+library(mclust)
+mc <- mclust::Mclust(dflo)
+summary(mc) #первый символ относится к объему, второй - к форме, а третий - к ориентации. (E-- равный; V-- переменный; I-- расположение относительно осей координат)
+head(mc$z) #каждому наблюдению назначается кластер с максимальной оцененной вероятностью.
+par(mfrow = c(1, 2))
+plot(mc, "classification")
+plot(mc, "uncertainty")
+fviz_cluster(mc, data = dflo)
+```
+
+Результаты похожи на исходную классификацию.
+
+Максимальный BIC (среди всех моделей) у модели VVV (но у неё же и максимальное число параметров).
+
+Попробуем выбрать другую модель:
+
+```{r, out.width="150%"}
+plot(mc, "BIC") #Зависимость критерия BIC от числа кластеров для различных вариантов параметризации ковариационной матрицы
+apply(mc$BIC, 2, which.max)
+```
+
+Кроме первых двух моделей BIC у остальных моделей близок, возьмем модель, кластеризующую данные на 3 кластера, но имеющюю меньше параметров.
+
+```{r}
+mclustModelNames('EVV')
+mc1 <- mclust::Mclust(dflo, modelNames = 'EVV')
+summary(mc1)
+head(mc1$z) 
+par(mfrow = c(1, 2))
+plot(mc1, "classification")
+plot(mc1, "uncertainty")
+fviz_cluster(mc1, data = dflo)
+```
+
+Результаты немного отличаются, но все еще похожи на исходную классификацию.
